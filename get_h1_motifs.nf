@@ -20,12 +20,17 @@ ref_genome_ch = Channel.fromPath(params.ref_genome)
 params.query_motif = '/lustre/fs4/home/rjohnson/pipelines/h1_motif_analysis/bin/gata1.motif'
 motif_query_tf_ch = Channel.fromPath(params.query_motif)
 
+// now getting the file that contains the up peaks and up genes so I can find the gata1 motifs that are bound to promoters or enhancer regions of upregulated genes
+params.up_peaks_up_genes = '/lustre/fs4/risc_lab/scratch/iduba/linker-histone/multi-results/ATACxRNA/newRNA/rep-up-peaks-50kb-upgenes.bed'
+up_peaks_up_genes_ch = Channel.fromPath(params.up_peaks_up_genes)
 
 
 include {
     
     homer_find_motifs;
-    annotate_peaks
+    annotate_peaks;
+    find_motif_in_promoter;
+    annotate_motif_promoter
 
 }from './modules/find_motifs_modules.nf'
 
@@ -56,4 +61,27 @@ workflow {
     // the output of gata1 motifs is better here becasue it annotates the actual peaks with that information
     annotate_peaks(up_scrvslow_meta, ref_genome_ch, motif_query_tf_ch)
 
+
+
+
+    // finding the gata1 motifs in bed regions that correspond to up peaks and up genes
+
+    // lets tokenize the file name and get metadata
+    up_peaks_up_genes_ch
+        .map {file ->
+
+        basename = file.baseName
+        filename = file.name
+        tokens = basename.tokenize("-")
+        tuple("${tokens[1]}_${tokens[2]}_${tokens[4]}", basename, filename, file)
+
+
+        }
+        .set{ uppeaks_upgenes_meta_ch}
+
+    find_motif_in_promoter(uppeaks_upgenes_meta_ch, ref_genome_ch, motif_query_tf_ch)
+
+    annotate_motif_promoter(uppeaks_upgenes_meta_ch, ref_genome_ch, motif_query_tf_ch)
 }
+
+
