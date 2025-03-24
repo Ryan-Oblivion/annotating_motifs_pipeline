@@ -146,7 +146,7 @@ process annotate_motif_promoter {
 
     conda '/ru-auth/local/home/rjohnson/miniconda3/envs/homer_v5.1_rj'
 
-    publishDir './annotated_promoters', mode:'copy', pattern:'*'
+    publishDir "./annotated_promoters/${type_chosen}", mode:'copy', pattern:'*'
 
 
     input:
@@ -179,6 +179,83 @@ process annotate_motif_promoter {
     -m ${motif_file} \
     -mbed ${bed_outname_promoter_motifs} \
     > ${out_gata1_promoters}
+
+
+
+
+    """
+}
+
+
+process bedtools_intersect {
+
+    conda '/ru-auth/local/home/rjohnson/miniconda3/envs/bedtools_rj'
+    
+    label 'normal_small_resources'
+
+    publishDir "./intersection_bed_output", mode: 'copy', pattern: '*'
+
+    //debug true
+
+    input:
+    
+    path(target_genes_bed)
+    //path(target_genes_bed)
+
+    tuple val(type_chosen), val(basename), val(filename), path(bed_file)
+
+
+
+
+    output:
+
+    path("${intersect_file_name}"), emit: intersect_target_gene_bed
+
+
+    script:
+    
+    name_file_1 = "${target_genes_bed[0].baseName}"
+    name_file_2 = "${target_genes_bed[1].baseName}"
+    name_file_3 = "${target_genes_bed[2].baseName}"
+    name_file_4 = "${target_genes_bed[3].baseName}"
+    name_file_5 = "${target_genes_bed[4].baseName}"
+    name_file_6 = "${target_genes_bed[5].baseName}"
+    name_file_7 = "${target_genes_bed[6].baseName}"
+    name_file_8 = "${target_genes_bed[7].baseName}"
+    name_file_9 = "${target_genes_bed[8].baseName}"
+    name_file_10 = "${target_genes_bed[9].baseName}"
+
+
+    intersect_file_name = "${basename}_intersect_tartet_genes.bed"
+
+    """
+    #!/usr/bin/env bash
+
+    echo "these are the target gene regions as a list no comma: ${target_genes_bed}"
+
+
+    ######### parameters  ########
+
+    #-a : bed file that is showing coordinates of interest in experiment.
+    #-b : enter the databases of coordinates wanted as over lap in a
+    #-wa : write the original entry in A for each overlap
+    #-sortout : when using multiple databases (-b), sort the output DB hits for each record. 
+    #-names : will let me put the name i want that represents the name where the alignment came from.
+    #-filenames : will report the file name automatically
+    ##############################
+    
+
+
+    bedtools intersect -a ${filename} \
+    -b ${target_genes_bed} \
+    -sortout \
+    -wa \
+    -wb \
+    -u \
+    -filenames \
+    > ${intersect_file_name}
+
+
 
 
 
