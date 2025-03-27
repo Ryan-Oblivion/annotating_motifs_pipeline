@@ -13,16 +13,28 @@ params.scrvslow_nochange = '/lustre/fs4/risc_lab/scratch/iduba/linker-histone/AT
 nochange_scrvslow_ch  = Channel.fromPath(params.scrvslow_nochange)
 
 // now to get the genome
-params.ref_genome = '/lustre/fs4/risc_lab/store/risc_data/downloaded/hg38/genome/Sequence/WholeGenomeFasta/genome.fa'
-ref_genome_ch = Channel.fromPath(params.ref_genome)
+params.ref_genome = file('/lustre/fs4/risc_lab/store/risc_data/downloaded/hg38/genome/Sequence/WholeGenomeFasta/genome.fa')
+ref_genome_ch = Channel.value(params.ref_genome)
 
 // get the gata1 motif file. the user would be able to specify the path to any specific tf that they want to find the motif position for
-params.query_motif = '/lustre/fs4/home/rjohnson/pipelines/h1_motif_analysis/bin/gata1.motif'
-motif_query_tf_ch = Channel.fromPath(params.query_motif)
+params.query_motif = file('/lustre/fs4/home/rjohnson/pipelines/h1_motif_analysis/bin/gata1.motif')
+motif_query_tf_ch = Channel.value(params.query_motif)
 
 // now getting the file that contains the up peaks and up genes so I can find the gata1 motifs that are bound to promoters or enhancer regions of upregulated genes
-params.up_peaks_up_genes = '/lustre/fs4/risc_lab/scratch/iduba/linker-histone/multi-results/ATACxRNA/newRNA/rep-up-peaks-50kb-upgenes.bed'
-up_peaks_up_genes_ch = Channel.fromPath(params.up_peaks_up_genes)
+params.up_peaks_up_genes = file('/lustre/fs4/risc_lab/scratch/iduba/linker-histone/multi-results/ATACxRNA/newRNA/rep-up-peaks-50kb-upgenes.bed')
+up_peaks_up_genes_ch = Channel.value(params.up_peaks_up_genes)
+
+
+// getting the supplement 2 list from the nature paper on k562 cell enhancers.
+params.supplement_gRNAs =  '/lustre/fs4/home/rjohnson/pipelines/h1_motif_analysis/bin/41467_2024_52490_MOESM5_ESM.csv'
+gRNA_info_csv = Channel.fromPath(params.supplement_gRNAs)
+
+
+////////////////////////////////////////////
+
+// this is the file from hera that contains the Gene_IDs, in the Gene_ID column, for genes that are up (up genes) and not significant (unchanging genes) in the "type" column
+params.target_h1_genes_csv = '/lustre/fs4/home/rjohnson/pipelines/h1_motif_analysis/bin/WTvslow_with_gene_names.csv'
+h1_target_genes_ch = Channel.fromPath(params.target_h1_genes_csv)
 
 
 include {
@@ -32,18 +44,183 @@ include {
     find_motif_in_promoter;
     annotate_motif_promoter;
     bedtools_intersect;
-    annotate_motif_promoter as annotate_motif_promoter_2
+    annotate_motif_enhancers;
+    kenttools_get_regions;
+    get_gene_ids_regions;
+    get_gene_ids_regions as get_gene_ids_regions_2;
+    find_motif_in_promoter as find_motif_in_promoter_2;
+     annotate_motif_promoter as annotate_motif_promoter_2
 
 }from './modules/find_motifs_modules.nf'
 
 
 workflow {
 
+    //////////////// starting a new ////////////////
+
+    // this will parse the file and give back only the up gene names
+    h1_target_genes_ch
+        .splitCsv(header:true)
+        .filter{ row ->
+
+        up_genes = row.type.startsWith("Up")
+
+        //unchanging= row.type.startsWith("Not significant")
+        //tuple(up_genes, unchanging)
+
+        }
+        .map {row ->
+            
+            //up_gene_id = tuple(row.Gene_ID, row.type)
+            row.Gene_ID
+
+        }
+        .collectFile(name:'up_h1_genes.txt', newLine: true, storeDir:'./bin')
+        .set{up_h1_genes_file_ch}
+
+
+    // this will parse the file and give back the unchanging gene list
+    h1_target_genes_ch
+        .splitCsv(header:true)
+        .filter{ row ->
+
+        up_genes = row.type.startsWith("Not significant")
+
+        //unchanging= row.type.startsWith("Not significant")
+        //tuple(up_genes, unchanging)
+
+        }
+        .map {row ->
+            
+            //unchanging_gene_id = tuple(row.Gene_ID, row.type)
+            row.Gene_ID
+
+        }
+        .collectFile(name:'unchanging_h1_genes.txt', newLine: true, storeDir:'./bin')
+        .set{unchanging_h1_genes_file_ch}
+        
+        
+    // now that i have the list of genes that are unchanging and the list that were up genes in their respective files, i can make a process to get the coordinates for each gene
+    // make a process to get regions from gene_ids
+    // i could've just combined the two files and flattened them and sent that into one process and nextflow wouldve handeled parallelizing the process
+    get_gene_ids_regions(up_h1_genes_file_ch)  // this will get the up gene regions
+    get_gene_ids_regions_2(unchanging_h1_genes_file_ch)  // this gets the unchanging gene regions 
+
+
+    // combine the out files from each channel
+
+    up_h1_coor_file = get_gene_ids_regions.out.h1_genes_coordinates
+    unchanging_h1_coor_file = get_gene_ids_regions_2.out.h1_genes_coordinates
+
+    up_and_unchanging_coor_files = up_h1_coor_file.combine(unchanging_h1_coor_file).flatten()
+    //up_and_unchanging_coor_files.view()
+
+
+    // now looking for the motifs of the upgenes and motifs of unchanging genes
+
+    up_h1_coor_file
+        .map {file ->
+
+        basename = file.baseName
+        filename = file.name
+        tokens = basename.tokenize("_")
+        tuple("${tokens[0]}_${tokens[1]}_${tokens[2]}", basename, filename, file)
+
+
+        }
+        .set{ upgenes_h1_meta_ch} // how the channel looks [up_h1_genes, up_h1_genes_coordinates, up_h1_genes_coordinates.bed, /lustre/fs4/risc_lab/scratch/rjohnson/pipelines/h1_motif_analysis/work/65/29edcaa27520db3a4eaac85e689cff/up_h1_genes_coordinates.bed]
+
+    find_motif_in_promoter(upgenes_h1_meta_ch, ref_genome_ch, motif_query_tf_ch)
+
+    annotate_motif_promoter(upgenes_h1_meta_ch, ref_genome_ch, motif_query_tf_ch)
+
+    // and motifs of unchanging genes
+
+    unchanging_h1_coor_file
+        .map {file ->
+
+        basename = file.baseName
+        filename = file.name
+        tokens = basename.tokenize("_")
+        tuple("${tokens[0]}_${tokens[1]}_${tokens[2]}", basename, filename, file)
+
+
+        }
+        .set{ unchanging_h1_meta_ch} // [unchanging_h1_genes, unchanging_h1_genes_coordinates, unchanging_h1_genes_coordinates.bed, /lustre/fs4/risc_lab/scratch/rjohnson/pipelines/h1_motif_analysis/work/40/0a4dcfac72aebd8cc283899e449b60/unchanging_h1_genes_coordinates.bed]
+    
+    
+    
+    find_motif_in_promoter_2(unchanging_h1_meta_ch, ref_genome_ch, motif_query_tf_ch)
+
+    annotate_motif_promoter_2(unchanging_h1_meta_ch, ref_genome_ch, motif_query_tf_ch)
+
+    //getting the gene motif tsv files
+    up_genes_motif_tsv = find_motif_in_promoter.out.promoter_gata1_motifs_tsv  // using this file gata1_in_promoter_up_h1_genes.tsv
+    unchanging_genes_motif_tsv = find_motif_in_promoter_2.out.promoter_gata1_motifs_tsv
+
+    // now make a process that works on comparing how many motifs show up for each gene
+    plot_motifs_per_gene(up_genes_motif_tsv, unchanging_genes_motif_tsv)
+
+    // now to find the intersection of the up and unchanging regions with the uppeaks upgenes file
+    // this is the uppeaks-upgenes file up_peaks_up_genes_ch
+    // using this process bedtools_intersect
+
+    // I already created a meta channel for the uppeaks up genes channel and that is used as input for the bedtools_intersect process
+
+    up_peaks_up_genes_ch
+        .map {file ->
+
+        basename = file.baseName
+        filename = file.name
+        tokens = basename.tokenize("-")
+        tuple("${tokens[1]}_${tokens[2]}_${tokens[4]}", basename, filename, file)
+
+
+        }
+        .set{ uppeaks_upgenes_meta_ch}
+
+    
+
+    
+    
+    
+    // not doing intersection yet
+
+    // put this meta channel second in the bedtools_intersect process
+    // put the up genes file and unchanging coordinate files first
+    //bedtools_intersect(up_and_unchanging_coor_files, uppeaks_upgenes_meta_ch )
+
+        
+        
+        //.view() 
+
+        /*.multiMap { up, unchanging ->
+
+            up_genes: up
+            unchanging_genes: unchanging
+
+        }
+        //.set{h1_genes_separated}
+        //.view()
+    
+    //h1_genes_separated.up_genes.view{ it -> "the up genes: $it"}
+    //h1_genes_separated.unchanging_genes.view{ it -> "the unchanging genes: $it"}
+    */
+
+
+
+
+
+
+    ////////////////////////////////////////////////
+
     // just checking if the paths are visible
     //up_scrvslow_ch.view()
     //nochange_scrvslow_ch.view()
 
     // manipulating the channel to get some base names and tokens for meta data
+    
+    /*
     up_scrvslow_ch
         .map { file -> 
 
@@ -124,8 +301,44 @@ workflow {
         }
         .set{intersect_bed_metadata}
 
-    intersect_bed_metadata.view()
-    annotate_motif_promoter_2(intersect_bed_metadata, ref_genome_ch, motif_query_tf_ch)
+    //intersect_bed_metadata.view()
+    annotate_motif_enhancers(intersect_bed_metadata, ref_genome_ch, motif_query_tf_ch)
+
+
+    //gRNA_info_csv.view()
+    // make a process to grab only the lines that have guides that target enhancers.
+    // didnt need to make a process. I just manipulated the file in nextflow
+    gRNA_info_csv
+        .splitCsv(header:true)
+        .filter {row ->
+
+            name_of_guide = row.target_guide
+            enhancer_guides = name_of_guide.endsWith("enhancer")
+
+            // now only keep the gene names from the rows that have enhancer as the target guides
+
+            //gene_name = enhancer_guides.target_gene
+
+            
+            
+            
+        }
+        .map {row ->
+
+            gene_name = row.target_gene
+
+        }
+        .distinct()
+        .collectFile(name: 'enhancer_genes.txt', storeDir: './bin', newLine: true )
+        .set{enhancer_gene_list_ch}
+        //.view{it -> "this is a gene that was targeted from enhancer guide: ${it}"}
+
+    // now making a process that gets the enhancer_genes file and uses kent-tools to query ucsc and get the regions.
+
+    enhancer_gene_list_ch.view()
+    kenttools_get_regions(enhancer_gene_list_ch)
+
+*/
 
 
 }

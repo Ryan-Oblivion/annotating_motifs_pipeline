@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --time=1-00:00:00
 #SBATCH --job-name=nextflow_chip
-
+#SBATCH --partition=hpc_a10_a
 
 
 source /lustre/fs4/home/rjohnson/.bashrc_rj_test.sh
