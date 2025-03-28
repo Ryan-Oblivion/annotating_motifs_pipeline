@@ -37,6 +37,16 @@ params.target_h1_genes_csv = '/lustre/fs4/home/rjohnson/pipelines/h1_motif_analy
 h1_target_genes_ch = Channel.fromPath(params.target_h1_genes_csv)
 
 
+params.wtvs_lowup = file('/lustre/fs4/risc_lab/scratch/iduba/linker-histone/RNA-seq/rep2/hg38-ERCC-UMI-alignment/DESeq2_results/WTvslowup-genebody.bed')
+wtvslowup_genebody_ch = Channel.value(params.wtvs_lowup)
+
+params.wtvs_lowdown_nochange = file('/lustre/fs4/risc_lab/scratch/iduba/linker-histone/RNA-seq/rep2/hg38-ERCC-UMI-alignment/DESeq2_results/WTvslowdown-basemeanmatchnochange-genebody.bed')
+wtvslowdown_nochange_ch = Channel.value(params.wtvs_lowdown_nochange)
+
+
+
+
+
 include {
     
     homer_find_motifs;
@@ -49,135 +59,151 @@ include {
     get_gene_ids_regions;
     get_gene_ids_regions as get_gene_ids_regions_2;
     find_motif_in_promoter as find_motif_in_promoter_2;
-     annotate_motif_promoter as annotate_motif_promoter_2
+    annotate_motif_promoter as annotate_motif_promoter_2;
+    plot_motifs_per_gene
 
 }from './modules/find_motifs_modules.nf'
 
+include {
+
+    analyzing_basemean_genes_workflow
+
+
+}from './workflows/motif_workflow_basemean.nf'
 
 workflow {
+
+
+    ////// Making a new workflow for organization ////
+
+    analyzing_basemean_genes_workflow(wtvslowup_genebody_ch, wtvslowdown_nochange_ch, ref_genome_ch, motif_query_tf_ch )
+
+
+
+
 
     //////////////// starting a new ////////////////
 
     // this will parse the file and give back only the up gene names
-    h1_target_genes_ch
-        .splitCsv(header:true)
-        .filter{ row ->
+    // h1_target_genes_ch
+    //     .splitCsv(header:true)
+    //     .filter{ row ->
 
-        up_genes = row.type.startsWith("Up")
+    //     up_genes = row.type.startsWith("Up")
 
-        //unchanging= row.type.startsWith("Not significant")
-        //tuple(up_genes, unchanging)
+    //     //unchanging= row.type.startsWith("Not significant")
+    //     //tuple(up_genes, unchanging)
 
-        }
-        .map {row ->
+    //     }
+    //     .map {row ->
             
-            //up_gene_id = tuple(row.Gene_ID, row.type)
-            row.Gene_ID
+    //         //up_gene_id = tuple(row.Gene_ID, row.type)
+    //         row.Gene_ID
 
-        }
-        .collectFile(name:'up_h1_genes.txt', newLine: true, storeDir:'./bin')
-        .set{up_h1_genes_file_ch}
+    //     }
+    //     .collectFile(name:'up_h1_genes.txt', newLine: true, storeDir:'./bin')
+    //     .set{up_h1_genes_file_ch}
 
 
-    // this will parse the file and give back the unchanging gene list
-    h1_target_genes_ch
-        .splitCsv(header:true)
-        .filter{ row ->
+    // // this will parse the file and give back the unchanging gene list
+    // h1_target_genes_ch
+    //     .splitCsv(header:true)
+    //     .filter{ row ->
 
-        up_genes = row.type.startsWith("Not significant")
+    //     up_genes = row.type.startsWith("Not significant")
 
-        //unchanging= row.type.startsWith("Not significant")
-        //tuple(up_genes, unchanging)
+    //     //unchanging= row.type.startsWith("Not significant")
+    //     //tuple(up_genes, unchanging)
 
-        }
-        .map {row ->
+    //     }
+    //     .map {row ->
             
-            //unchanging_gene_id = tuple(row.Gene_ID, row.type)
-            row.Gene_ID
+    //         //unchanging_gene_id = tuple(row.Gene_ID, row.type)
+    //         row.Gene_ID
 
-        }
-        .collectFile(name:'unchanging_h1_genes.txt', newLine: true, storeDir:'./bin')
-        .set{unchanging_h1_genes_file_ch}
+    //     }
+    //     .collectFile(name:'unchanging_h1_genes.txt', newLine: true, storeDir:'./bin')
+    //     .set{unchanging_h1_genes_file_ch}
         
         
-    // now that i have the list of genes that are unchanging and the list that were up genes in their respective files, i can make a process to get the coordinates for each gene
-    // make a process to get regions from gene_ids
-    // i could've just combined the two files and flattened them and sent that into one process and nextflow wouldve handeled parallelizing the process
-    get_gene_ids_regions(up_h1_genes_file_ch)  // this will get the up gene regions
-    get_gene_ids_regions_2(unchanging_h1_genes_file_ch)  // this gets the unchanging gene regions 
+    // // now that i have the list of genes that are unchanging and the list that were up genes in their respective files, i can make a process to get the coordinates for each gene
+    // // make a process to get regions from gene_ids
+    // // i could've just combined the two files and flattened them and sent that into one process and nextflow wouldve handeled parallelizing the process
+    // get_gene_ids_regions(up_h1_genes_file_ch)  // this will get the up gene regions
+    // get_gene_ids_regions_2(unchanging_h1_genes_file_ch)  // this gets the unchanging gene regions 
 
 
-    // combine the out files from each channel
+    // // combine the out files from each channel
 
-    up_h1_coor_file = get_gene_ids_regions.out.h1_genes_coordinates
-    unchanging_h1_coor_file = get_gene_ids_regions_2.out.h1_genes_coordinates
+    // up_h1_coor_file = get_gene_ids_regions.out.h1_genes_coordinates
+    // unchanging_h1_coor_file = get_gene_ids_regions_2.out.h1_genes_coordinates
 
-    up_and_unchanging_coor_files = up_h1_coor_file.combine(unchanging_h1_coor_file).flatten()
-    //up_and_unchanging_coor_files.view()
-
-
-    // now looking for the motifs of the upgenes and motifs of unchanging genes
-
-    up_h1_coor_file
-        .map {file ->
-
-        basename = file.baseName
-        filename = file.name
-        tokens = basename.tokenize("_")
-        tuple("${tokens[0]}_${tokens[1]}_${tokens[2]}", basename, filename, file)
+    // up_and_unchanging_coor_files = up_h1_coor_file.combine(unchanging_h1_coor_file).flatten()
+    // //up_and_unchanging_coor_files.view()
 
 
-        }
-        .set{ upgenes_h1_meta_ch} // how the channel looks [up_h1_genes, up_h1_genes_coordinates, up_h1_genes_coordinates.bed, /lustre/fs4/risc_lab/scratch/rjohnson/pipelines/h1_motif_analysis/work/65/29edcaa27520db3a4eaac85e689cff/up_h1_genes_coordinates.bed]
+    // // now looking for the motifs of the upgenes and motifs of unchanging genes
 
-    find_motif_in_promoter(upgenes_h1_meta_ch, ref_genome_ch, motif_query_tf_ch)
+    // up_h1_coor_file
+    //     .map {file ->
 
-    annotate_motif_promoter(upgenes_h1_meta_ch, ref_genome_ch, motif_query_tf_ch)
-
-    // and motifs of unchanging genes
-
-    unchanging_h1_coor_file
-        .map {file ->
-
-        basename = file.baseName
-        filename = file.name
-        tokens = basename.tokenize("_")
-        tuple("${tokens[0]}_${tokens[1]}_${tokens[2]}", basename, filename, file)
+    //     basename = file.baseName
+    //     filename = file.name
+    //     tokens = basename.tokenize("_")
+    //     tuple("${tokens[0]}_${tokens[1]}_${tokens[2]}", basename, filename, file)
 
 
-        }
-        .set{ unchanging_h1_meta_ch} // [unchanging_h1_genes, unchanging_h1_genes_coordinates, unchanging_h1_genes_coordinates.bed, /lustre/fs4/risc_lab/scratch/rjohnson/pipelines/h1_motif_analysis/work/40/0a4dcfac72aebd8cc283899e449b60/unchanging_h1_genes_coordinates.bed]
+    //     }
+    //     .set{ upgenes_h1_meta_ch} // how the channel looks [up_h1_genes, up_h1_genes_coordinates, up_h1_genes_coordinates.bed, /lustre/fs4/risc_lab/scratch/rjohnson/pipelines/h1_motif_analysis/work/65/29edcaa27520db3a4eaac85e689cff/up_h1_genes_coordinates.bed]
+
+    // find_motif_in_promoter(upgenes_h1_meta_ch, ref_genome_ch, motif_query_tf_ch)
+
+    // annotate_motif_promoter(upgenes_h1_meta_ch, ref_genome_ch, motif_query_tf_ch)
+
+    // // and motifs of unchanging genes
+
+    // unchanging_h1_coor_file
+    //     .map {file ->
+
+    //     basename = file.baseName
+    //     filename = file.name
+    //     tokens = basename.tokenize("_")
+    //     tuple("${tokens[0]}_${tokens[1]}_${tokens[2]}", basename, filename, file)
+
+
+    //     }
+    //     .set{ unchanging_h1_meta_ch} // [unchanging_h1_genes, unchanging_h1_genes_coordinates, unchanging_h1_genes_coordinates.bed, /lustre/fs4/risc_lab/scratch/rjohnson/pipelines/h1_motif_analysis/work/40/0a4dcfac72aebd8cc283899e449b60/unchanging_h1_genes_coordinates.bed]
     
     
     
-    find_motif_in_promoter_2(unchanging_h1_meta_ch, ref_genome_ch, motif_query_tf_ch)
+    // find_motif_in_promoter_2(unchanging_h1_meta_ch, ref_genome_ch, motif_query_tf_ch)
 
-    annotate_motif_promoter_2(unchanging_h1_meta_ch, ref_genome_ch, motif_query_tf_ch)
+    // annotate_motif_promoter_2(unchanging_h1_meta_ch, ref_genome_ch, motif_query_tf_ch)
 
-    //getting the gene motif tsv files
-    up_genes_motif_tsv = find_motif_in_promoter.out.promoter_gata1_motifs_tsv  // using this file gata1_in_promoter_up_h1_genes.tsv
-    unchanging_genes_motif_tsv = find_motif_in_promoter_2.out.promoter_gata1_motifs_tsv
+    // //getting the gene motif tsv files
+    // up_genes_motif_tsv = find_motif_in_promoter.out.promoter_gata1_motifs_tsv  // using this file gata1_in_promoter_up_h1_genes.tsv
+    // unchanging_genes_motif_tsv = find_motif_in_promoter_2.out.promoter_gata1_motifs_tsv
 
-    // now make a process that works on comparing how many motifs show up for each gene
-    plot_motifs_per_gene(up_genes_motif_tsv, unchanging_genes_motif_tsv)
+    // // now make a process that works on comparing how many motifs show up for each gene
+    // plot_motifs_per_gene(up_genes_motif_tsv, unchanging_genes_motif_tsv)
 
-    // now to find the intersection of the up and unchanging regions with the uppeaks upgenes file
-    // this is the uppeaks-upgenes file up_peaks_up_genes_ch
-    // using this process bedtools_intersect
+    // // now to find the intersection of the up and unchanging regions with the uppeaks upgenes file
+    // // this is the uppeaks-upgenes file up_peaks_up_genes_ch
+    // // using this process bedtools_intersect
 
-    // I already created a meta channel for the uppeaks up genes channel and that is used as input for the bedtools_intersect process
+    // // I already created a meta channel for the uppeaks up genes channel and that is used as input for the bedtools_intersect process
 
-    up_peaks_up_genes_ch
-        .map {file ->
+    // up_peaks_up_genes_ch
+    //     .map {file ->
 
-        basename = file.baseName
-        filename = file.name
-        tokens = basename.tokenize("-")
-        tuple("${tokens[1]}_${tokens[2]}_${tokens[4]}", basename, filename, file)
+    //     basename = file.baseName
+    //     filename = file.name
+    //     tokens = basename.tokenize("-")
+    //     tuple("${tokens[1]}_${tokens[2]}_${tokens[4]}", basename, filename, file)
 
 
-        }
-        .set{ uppeaks_upgenes_meta_ch}
+    //     }
+    //     .set{ uppeaks_upgenes_meta_ch}
 
     
 

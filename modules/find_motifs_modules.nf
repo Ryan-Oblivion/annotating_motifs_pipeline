@@ -426,6 +426,10 @@ process plot_motifs_per_gene {
 
     conda '/ru-auth/local/home/rjohnson/miniconda3/envs/r_language'
 
+    label 'normal_small_resources'
+
+    publishDir "./analysis_plots_collection", mode: 'copy', pattern:'*'
+
     input:
 
     path(up_genes_motif_tsv)
@@ -435,17 +439,29 @@ process plot_motifs_per_gene {
 
     output:
 
+    path("${png_out_name}"), emit: barplot_png
+
+    path("${hist_for_up_genes}"), emit: hist_up_genes_png
+
+    path("${hist_for_unchang_genes}"), emit: hist_unchanging_genes_png
+
 
     script:
+
+    png_out_name = "motif_counts_per_category_2.png"
+    hist_for_up_genes = "up_gene_bar_plot.png"
+    hist_for_unchang_genes = "unchanging_gene_bar_plot.png"
 
 
     """
     #!/usr/bin/env Rscript
 
     library(dplyr)
+    library(ggplot2)
+    library(tidyr)
 
-    up_genes = read.csv('gata1_in_promoter_up_h1_genes.tsv', sep='\t',header=TRUE)
-    unchanging_genes = read.csv('gata1_in_promoter_unchanging_h1_genes.tsv',sep='\t',header=TRUE)
+    up_genes = read.csv("${up_genes_motif_tsv}", sep='\t',header=TRUE)
+    unchanging_genes = read.csv("${unchanging_genes_motif_tsv}",sep='\t',header=TRUE)
     
     
     
@@ -466,13 +482,80 @@ process plot_motifs_per_gene {
     summarise(Count = n()) %>%
     arrange(desc(Count))
 
-    # the genes in up genes are not found in the unchanging genes
+    # making a dataframe for both
+
+    unchanging_gene_df = data.frame(unchanging_gene_counts)
+
+    up_gene_df = data.frame(up_gene_counts)
+
+    # now finding how many genes are in the up genes to use that number and grap that many genes from the unchanging gene dataframe
+
+    num_of_up_genes = length(up_gene_df[,1])
+    num_of_unchange_genes = length(unchanging_gene_df[,1])
+
+    # getting the df with the min number of unique genes and using that number to get the top genes in each
+    min_number_between_two = min(num_of_up_genes,num_of_unchange_genes)
+
+    top_up_gene_df = up_gene_df[1:min_number_between_two,]
+    top_unchanging_gene_df = unchanging_gene_df[1:min_number_between_two,]
+
+    # now that we have the same number of genes in both the up_gene_df and the new_unchanging_gene_df, I can see how many counts we have of motifs to compare
+    # the new unchanging df did take the first 1033 out of 13634 genes, which will represent the genes that had the highest number of motifs found
+
+    top_up_gene_motif_sum = sum(top_up_gene_df\$Count)
+    top_unchanging_gene_motif_sum = sum(top_unchanging_gene_df\$Count)
+
+    top_up_gene_motif_sum
+    # 12897 are the counts I get
+    top_unchanging_gene_motif_sum
+    # 11746 are the counts I get
+
+    # choosing the bottom 1033 unchanging genes
+    bottom_unchanging_gene_df = tail(unchanging_gene_df, min_number_between_two)
+
+    length(bottom_unchanging_gene_df[,1])
     
-    # just checking something
-    sum(up_gene_counts\$Count)
-    #[1] 5604
-    sum(unchanging_gene_counts\$Count)
-    #[1] 71766
+    bottom_unchanging_gene_motif_sum = sum(bottom_unchanging_gene_df\$Count)
+    sum(bottom_unchanging_gene_df\$Count)
+    
+
+    # putting all the motif sums into a dataframe for plotting
+
+    motif_sum_df = data.frame(top_up_gene_motif_sum, top_unchanging_gene_motif_sum, bottom_unchanging_gene_motif_sum)
+
+    # pivot the df
+
+    motif_sum_long = pivot_longer(motif_sum_df, cols = everything(), names_to = "Category", values_to = "Count")
+
+    # now making a bar plot with ggplot2
+
+    plot_for_motif_counts = ggplot(motif_sum_long, aes(x = Category, y = Count, fill = Category)) +
+    geom_bar(stat = "identity") +
+    theme_minimal() +
+    labs(title = "Motif Counts per Category", x = "Category", y = "Motif Count") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+    # saving the plot as a png
+    ggsave("${png_out_name}", plot = plot_for_motif_counts, device = "png")
+
+    # the genes in up genes are not found in the unchanging genes
+
+
+    # now making a histogram plot where x axis shows the genes and y axis shows the frequency each gene had
+
+    up_gene_bar_plot = ggplot(up_gene_df, aes(x=Count))+
+    geom_bar()+
+    labs(title = "Barplot of motifs found per up gene", x = "Number_of_motifs_found", y ="frequency of genes with this number of motifs")+
+    theme(axis.text.x = element_text(angle =45, hjust = 1))
+    ggsave("${hist_for_up_genes}", plot = last_plot(), device = "png")
+
+
+    unchanging_gene_bar_plot = ggplot(unchanging_gene_df, aes(x=Count))+
+    geom_bar()+
+    labs(title = "Barplot of motifs found per unchanging gene", x = "Number_of_motifs_found", y ="frequency of genes with this number of motifs")+
+    theme(axis.text.x = element_text(angle =45, hjust = 1))
+    ggsave("${hist_for_unchang_genes}", plot = last_plot(), device = "png")
+    
 
 
 
