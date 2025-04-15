@@ -423,8 +423,11 @@ process get_gene_ids_regions {
 
 process plot_motifs_per_gene {
 
+    // not using this R conda env anymore. built a better one
+    //conda '/ru-auth/local/home/rjohnson/miniconda3/envs/r_language'
 
-    conda '/ru-auth/local/home/rjohnson/miniconda3/envs/r_language'
+    // better conda R env
+    conda '/ru-auth/local/home/rjohnson/miniconda3/envs/new_r_lan_3_rj'
 
     label 'normal_small_resources'
 
@@ -555,6 +558,19 @@ process plot_motifs_per_gene {
     labs(title = "Barplot of motifs found per unchanging gene", x = "Number_of_motifs_found", y ="frequency of genes with this number of motifs")+
     theme(axis.text.x = element_text(angle =45, hjust = 1))
     ggsave("${hist_for_unchang_genes}", plot = last_plot(), device = "png")
+
+    # now I want to put both plots together
+
+    up_gene_df\$group = "Up-regulated"
+    unchanging_gene_df\$group = "Unchanged"
+
+    combined_df = rbind(up_gene_df, unchanging_gene_df)
+
+    combined_motif_analysis = ggplot(combined_df, aes(x=Count, fill= group)) +
+    geom_bar(postition = "dodge")+
+    labs(title = "Barplot of motifs found in promoter regions of upgenes vs unchanging genes", x = "Number_of_motifs_found", y ="frequency of genes with this number of motifs")+
+    theme(axis.text.x = element_text(angle =45, hjust = 1))
+    ggsave("test_overlay_hist.png", plot = last_plot(), device = "png")
     
 
 

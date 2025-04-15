@@ -3,14 +3,14 @@ nextflow.enable.dsl=2
 // the bed files that will be used for finding motifs in homer
 // /lustre/fs4/risc_lab/scratch/iduba/linker-histone/ATAC-seq/KA23/DEseq/
 
-params.scrvslow_up = '/lustre/fs4/risc_lab/scratch/iduba/linker-histone/ATAC-seq/KA23/DEseq/rep-peaks-scrvslow-up.bed'
+// params.scrvslow_up = '/lustre/fs4/risc_lab/scratch/iduba/linker-histone/ATAC-seq/KA23/DEseq/rep-peaks-scrvslow-up.bed'
 
-up_scrvslow_ch = Channel.fromPath(params.scrvslow_up)
+// up_scrvslow_ch = Channel.fromPath(params.scrvslow_up)
 
 
-params.scrvslow_nochange = '/lustre/fs4/risc_lab/scratch/iduba/linker-histone/ATAC-seq/KA23/DEseq/rep-peaks-scrvslow-nochange.bed'
+// params.scrvslow_nochange = '/lustre/fs4/risc_lab/scratch/iduba/linker-histone/ATAC-seq/KA23/DEseq/rep-peaks-scrvslow-nochange.bed'
 
-nochange_scrvslow_ch  = Channel.fromPath(params.scrvslow_nochange)
+// nochange_scrvslow_ch  = Channel.fromPath(params.scrvslow_nochange)
 
 // now to get the genome
 params.ref_genome = file('/lustre/fs4/risc_lab/store/risc_data/downloaded/hg38/genome/Sequence/WholeGenomeFasta/genome.fa')
@@ -24,6 +24,9 @@ motif_query_tf_ch = Channel.value(params.query_motif)
 params.up_peaks_up_genes = file('/lustre/fs4/risc_lab/scratch/iduba/linker-histone/multi-results/ATACxRNA/newRNA/rep-up-peaks-50kb-upgenes.bed')
 up_peaks_up_genes_ch = Channel.value(params.up_peaks_up_genes)
 
+// now getting the file that has up genes no change peaks
+params.up_genes_no_change_peaks = file('/lustre/fs4/risc_lab/scratch/iduba/linker-histone/multi-results/ATACxRNA/newRNA/rep-nochange-peaks-50kb-upgenes.bed')
+up_genes_no_change_peaks_ch = Channel.value(params.up_genes_no_change_peaks)
 
 // getting the supplement 2 list from the nature paper on k562 cell enhancers.
 params.supplement_gRNAs =  '/lustre/fs4/home/rjohnson/pipelines/h1_motif_analysis/bin/41467_2024_52490_MOESM5_ESM.csv'
@@ -71,6 +74,13 @@ include {
 
 }from './workflows/motif_workflow_basemean.nf'
 
+include {
+    upgenes_uppeaks_vs_upgenes_no_changepeaks_workflow
+
+}from '.workflows/upgenes_uppeaks_vs_upgenes_nochangepeaks_workflow.nf'
+
+
+
 workflow {
 
 
@@ -79,6 +89,10 @@ workflow {
     analyzing_basemean_genes_workflow(wtvslowup_genebody_ch, wtvslowdown_nochange_ch, ref_genome_ch, motif_query_tf_ch )
 
 
+    // now here are the next two files I want to look for motifs in promoters. uppeaks-upgenes vs upgenes-nochangepeaks
+    // up_peaks_up_genes_ch and up_genes_no_change_peaks_ch channels
+    // unlike the above workflow which has the gene id's in the bed files, i will have to find which of these peaks have intersect with gene coordinates and use those genes and coordinates to get motifs in the promoters of the genes
+    upgenes_uppeaks_vs_upgenes_no_changepeaks_workflow(up_peaks_up_genes_ch, up_genes_no_change_peaks_ch, ref_genome_ch, motif_query_tf_ch)
 
 
 
